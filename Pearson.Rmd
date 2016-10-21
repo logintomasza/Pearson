@@ -1,0 +1,275 @@
+---
+title: "Pearson Audition Project"
+author: "Tomasz Dąbrowski"
+date: "20th of October, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## Introduction
+  
+This document presents exploratoy research of Pearson's e-learning platform data. It will contain research hypotheses, descriptive statisitics, hypothesis testing, data visualisation, and chunks of code with the resulting output.
+
+### Loading data
+  
+Let's load a data from working directory and then take a look how it looks like. 
+```{r data}
+dt <- read.csv("data.csv", header = T, sep = ",")
+head(dt)
+
+```
+Let's see how many variables and observations are in the spreadsheet.
+```{r dims}
+dim(dt)
+```
+What are the types of the variables?
+```{r types}
+str(dt)
+```
+
+### Understanding variables 
+  
+All right, we have some information about data. It's time to make some assumptions. Which variables look interesting? They are described in the attached document. Let's have them here...
+
+* __learner__ id : anonymized student identifier
+* __country__ : country code of the student
+* __in_course__ : “t” if the student belongs to course taught by a teacher (as opposed
+to studying alone)
+* __unit__ : number or name of a unit (chapter) in the workbook
+* __avg_score__ : average percentage score on all activities within a given unit
+* __completion__ : the percentage of activities completed in a given unit, out of all
+activities available in that unit
+* __inv_rate__ : This is the extent to which a student deviates from the suggested
+order of activities by the pedagogy experts within a given unit. A value of zero
+indicates no departure from the suggested order, a value of one indicates a
+complete reversal of the order.
+  
+The __country__ variable looks promising. We will be able to compare performance of students across different countries. Thanks to __in_course__ variable, we will assesss efficiency of teachers. __unit__, __avg_score__ and __completion__ variables should tell us something about difficulty of certain units. __inv_rate__ seems to be very interesting. Do 'rebel' students perform better than 'regular' students? Are some countries more rebelious than others? Does teacher presence impact the way students learn?
+
+  
+Questions worth asking:    
+
+  1. Which units are the hardest? Which have the smallest completion rate?
+  2. Which country performs the best?  What country has most rebelious students?
+  3. Does having a teacher improve performance? 
+  4. What affects the most being succesfull? Country? Inverse index? Having a teacher?  
+
+## Exploring data
+
+  
+  
+#### Question 1: Which units are the hardest? Which have the smallest completion rate? 
+```{r question1}
+library(plyr)
+library(ggplot2)
+#install.packages('ggthemes', dependencies = TRUE) 
+library(ggthemes)
+theme_set(theme_gray(10)) 
+
+levels(dt$unit)
+levels(dt$unit) <- c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "REVIEW 1", "REVIEW 2", "REVIEW 3", "REVIEW 4", "VIDEO PODCASTS")  #better levels order
+
+unit_scores <- qplot(x = avg_score, data = dt) +
+  facet_wrap(~unit, ncol = 4) +
+  labs(x = "Average Score", y = "Count")
+unit_scores
+ggsave("scores_vs_unit.png", plot = unit_scores)
+
+```
+  
+What we can see, is that average score drops steadily with the progress of the student - with the exception of UNITS 2, 3, 4 and Review 4, where dramatic drop of average scores is observed. There must be something peculiar in them, preventing users from acheiving good scores. 
+
+  
+  __KEY INSIGHTS:__  
+  1. Units 2,3, 4 and Review 4 need a closer look. They are usaually not completed at all and students have very bad scores, compared to other units.  
+  2. There is a trend of lowering the average scores as the course continues. Perhaps students lose motivation as they move on or the difficulty is too high.  
+  3. It seems that because of point 2, students lower their completion rate as the course progresses.  
+
+```{r completion}
+completion <- qplot(x = completion, data = dt) +
+  facet_wrap(~unit, ncol = 4) +
+  labs(x = "Units Completion Rate", y = "Count")
+completion
+ggsave("completion.png", plot = completion)
+
+```
+
+
+  From these plots we can see that majority of students has very low rate of completing the task in these units.
+  
+  
+#### Question 2.1: Which country performs best? 
+  
+We have 87 countries. How to compare the scores among them?
+We need to average the average scores of students in these countries. 
+```{r question 2}
+#install.packages("tidyr")
+library(tidyr)
+library(dplyr)
+
+ggplot(dt, aes(x=factor(country), y=avg_score)) + #mean avg score per country
+  stat_summary(fun.y="mean", geom="bar") +
+  coord_flip()
+```
+
+  Since there is great disparity between number of valid observations across the countries, We will choose only countries that have more than 100 observations for further analysis.
+
+```{r}
+dt2 <- data.frame(dt$country, dt$avg_score) #smaller dt
+colnames(dt2) <- c("country", "avg_score")
+dt2 <- subset(dt2, dt$country != "") #subet of obs. with known countries
+
+
+dt3 <- dt2 %>% #wrangling data so that country averages are easier to compute
+        group_by(country) %>%
+        mutate(id = row_number()) %>%
+        spread(country, avg_score) %>%
+        select(-id)
+
+
+stud_num <- apply(dt3, 2, function(x) length(which(!is.na(x)))) #Variable: How many non-NA's is there in a column?
+means <- apply(dt3, 2, function(x) mean(x, na.rm = T)) #Variable: Means of average scores for every country
+sd <- apply(dt3, 2, function(x) sd(x, na.rm = T))#Variable: Standard Deviation from the mean
+
+
+dt4 <- data.frame(means, stud_num, sd)#Data frame with new variables
+
+
+dt5 <- dt4[dt4$stud_num > 100, ] #Data frame with countries that have more than 500 observations
+dt5$country <- rownames(dt5) #add Country as variable
+rownames(dt5) <- 1:21 #Remove country names from rownames()
+
+dt6 <- with(dt5, dt5[order(means), ]) #sorted by mean, good for quick comparison of countries
+
+mean_plot <- ggplot(dt6, aes(x = country, y = means)) + #bar plot
+  geom_bar(stat = "identity", fill = "grey80", colour = "black", width = 0.4) +
+  theme(axis.text.x=element_text(angle=-45, hjust=0.001)) +
+  labs(y= "Average Country Performance", x = "Country")
+mean_plot
+       
+ggsave("country_means.png", plot = mean_plot)
+
+```
+  
+We can observe that countries with the best mean scores are Ukraine (m = 0.85), Italy (m = 0.83) and Belgium (m = 0.82). Oman (m = 0.66), Saudi Arabia (m = 0.70) and Australia (m = 0.71) were the worst from the measured countries. 
+
+
+  __KEY INSIGHTS:__  
+  
+    1. There is considerable gap between some countries in average     student's scores. European countries on average perform slightly better than countries from other continents.
+      
+    2. Are courses prepared in accordance with sociocultural demands and experiences of their audiences?
+      
+    3. Perhaps some courses should be adapted (structurally, linguistically) so that they are more comprehensible for students from outside Western Culture. 
+    
+#### Question 2.2: What country has most rebelious students?
+```{r}
+dt2_1 <- data.frame(dt$country, dt$inv_rate) #smaller dt
+colnames(dt2_1) <- c("country", "inv_rate")
+dt2_1 <- subset(dt2_1, dt$country != "") #subet of obs. with known countries
+
+dt3_1 <- dt2_1 %>% #wrangling data so that country averages are easier to compute
+        group_by(country) %>%
+        mutate(id = row_number()) %>%
+        spread(country, inv_rate) %>%
+        select(-id)
+m_inv <- apply(dt3_1, 2, function(x) mean(x, na.rm = T))
+dt4_1 <- data.frame(m_inv, stud_num)
+dt5_1 <- dt4_1[dt4_1$stud_num > 100, ] #Data frame with countries that have more than 500 observations
+dt5_1$country <- rownames(dt5_1) #add Country as variable
+rownames(dt5_1) <- 1:21 #Remove country names from rownames()
+
+dt6_1 <- with(dt5_1, dt5_1[order(means), ]) #sorted by mean, good for quick comparison of countries
+
+inv_plot <- ggplot(dt6_1, aes(x = country, y = m_inv)) + #bar plot
+        geom_bar(stat = "identity", fill = "grey80", colour = "black", width = 0.4) +
+        theme(axis.text.x=element_text(angle=-45, hjust=0.001)) +
+        labs(y= "Average Country Inversion Rate", x = "Country")
+
+#install.packages("gridExtra")
+library(gridExtra)
+plots <- grid.arrange(grid.arrange(mean_plot, inv_plot, ncol = 1), padding = 2)
+ggsave("two_plots_perf_inf.png", plot = plots)
+
+```
+  
+  Now we can compare visually relation between Inversion Rate and Average Perfromance of students. It catches ones eye that at least some countries with relatively low performance have relatively high inversion rate, and vice versa: Oman on one hand, and Ukraine on the other.
+  
+Is there a real correlation between these two variables?
+
+    
+#### Question 3: Does higher inversion rate lower performance?
+
+
+```{r inv_vs_perf}
+summary(dt$inv_rate)
+reg2 <- lm(avg_score~inv_rate, data = dt)
+summary(reg2)
+
+reg_plot <- plot(dt$inv_rate, dt$avg_score, xlab = "Inversion Rate", ylab = "Average Score")
+abline(reg2, col="red")
+ggsave("regression_inv_score.png", plot = reg_plot)
+
+```
+  
+As we can see from the regression line above, inverting designed learning order does not help better performance. Students should be encouraged to stay on track. 
+
+This leads to another question:
+
+  
+#### Question: 4. Does having a teacher improve performance? 
+```{r teacher_vs_performance}
+by(dt$avg_score, dt$in_course, summary) #summary of scores for 2 groups (with and without teacher)
+
+reg <- lm(avg_score~in_course, data = dt) #regression model on two groups
+summary(reg)
+anova(reg)
+
+teachers <- ggplot(dt, aes(in_course, avg_score)) + #boxplot comparing two groups
+      geom_boxplot() +
+      labs(y = "Average Student's Score", x = "Student Groups") +
+      scale_x_discrete(labels = c("f" = "Without Teacher", "t" = "With Teacher"))
+teachers
+ggsave("teachers.png", plot = teachers)
+
+
+
+```
+  
+
+As we can see from the plots above, tutored group (m = 0.80) has significantly higher scores than group without teacher (m = 0.76) (F(1, 81428) = 243.72, p < .001).
+  
+  
+  __KEY INSIGHTS:__   
+  
+  1. Students benefit from having a teacher. It's a good idea to promote this kind of supervised learning. 
+  
+  
+#### Question 5: Does teacher supervision prevent from inversing the order of learning?
+
+```{r}
+
+t.test(inv_rate~in_course, data = dt)
+
+```
+  
+As we can see from Welsh Two Sample t-test, there was no significatnt difference in Inversion Rate between supervised and unsupervised group.
+
+  __KEY INSIGHTS:__  
+  
+  1. Teachers do not play important role in preventing students from inverting the order of learning.
+  
+  
+## Summary
+
+Analysis of the data leads to several conclusions:
+  
+  1. Some countries have better scores than the others. Perhaps cultural differences should be considered when designing learning materials.
+    
+  2. Students should be encouraged to be disciplined and follow course material in right order.
+    
+  3. Having a teacher improves students` performance. However, it does not prevent from changing the learning order. 
+
